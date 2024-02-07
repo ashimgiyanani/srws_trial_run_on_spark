@@ -1,0 +1,9 @@
+name: "srws_trial_run"
+channels:
+  - conda-forge
+dependencies:
+  - python=3.9.17
+  - pip
+  - glob2
+  - pandas
+  - matplotlib  
