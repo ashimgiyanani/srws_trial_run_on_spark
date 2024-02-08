@@ -2,8 +2,12 @@ name: "srws_trial_run"
 channels:
   - conda-forge
 dependencies:
-  - python=3.9.17
+  - python=3.9.18
   - pip
   - glob2
   - pandas
-  - matplotlib  
+  - matplotlib
+  - numpy
+  - python-dateutil
+  - scipy
+  - joblib

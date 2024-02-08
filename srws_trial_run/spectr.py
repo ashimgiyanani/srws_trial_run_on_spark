@@ -2,10 +2,7 @@
 import pandas as pd
 import os
 import numpy as np
-from numba import jit, njit
-import matplotlib.pyplot as plt
 import sys
-import warnings
 import warnings
 warnings.simplefilter(action='ignore', category=pd.errors.PerformanceWarning)
 
@@ -17,8 +14,6 @@ sys.path.append(os.path.join(workDir,'data', 'nawea', 'srws'))
 sys.path.append(r"c:\Users\giyash\OneDrive - Fraunhofer\Python\Scripts\userModules")
 
 import pythonAssist as pa
-from FnWsRange import FnWsRange
-from FnUncertainty_Vlos import FnUncertainty_Vlos
 from FnPeaks import FnPeaks
 
 # import user functions
@@ -29,10 +24,8 @@ from FnPeaks import FnPeaks
 # from ReconstructUVW import *
 # from ReconstructUV import *
 # from calc_angles import *
-from Read_SRWS_bin import Read_SRWS_bin
-from scipy.signal import find_peaks, peak_widths
+from scipy.signal import find_peaks
 
-from matplotlib.dates import DateFormatter
 # Handle date time conversions between pandas and matplotlib
 from pandas.plotting import register_matplotlib_converters
 register_matplotlib_converters()
@@ -570,7 +563,7 @@ class SpectralAnalysis:
         vlos = lags*(self.inp.lambda0*self.inp.Fs/(2*self.inp.Nfft))
         return vlos
     
-    from numba import jit
+    # from numba import jit
     @staticmethod
     # @jit(nopython=True)
     def calc_snr(spec, peaks, method='peak'):

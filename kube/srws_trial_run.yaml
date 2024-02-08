@@ -2,7 +2,7 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   # For each subsequent run, change the name a bit. e.g. add a timestamp.
-  name: "srws-trial-run-070224t1120"
+  name: "srws-trial-run8"
   namespace: ashim
 spec:
   ttlSecondsAfterFinished: 300
@@ -18,7 +18,7 @@ spec:
           - /data/ashim-data/srws_data
           - basic
           - "False"
-          - "*.*"
+          - "202*T*"
         ## Uncomment to use environment variables
         # env:
         #   - name: SOMEVAR
