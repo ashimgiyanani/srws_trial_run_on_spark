@@ -4,7 +4,12 @@ import datetime
 
 class struct():
     def __init__(self, **kwargs):
-        self.__dict__.update(kwargs)
+        # self.__dict__.update(kwargs)
+        for key, value in kwargs.items():
+            if isinstance(value, dict):
+                setattr(self, key, struct(**value))
+            else:
+                setattr(self, key, value)
 
     def __repr__(self):
         items = (f"{k}={v!r}" for k, v in self.__dict__.items())
@@ -32,7 +37,7 @@ def myround(x, base=5):
 def now():
     # returns the current datetime
     import datetime
-    return datetime.datetime.now().strftime('%d.%m.%Y %H:%M:%S')
+    return datetime.datetime.now().strftime('%Y.%m.%d %H:%M:%S')
 
 def today():
     from datetime import datetime
@@ -368,7 +373,7 @@ def replace_rows(df, replace):
             df = dfc.copy()
             pass
         elif (replace == 'bfill') | (replace == 'ffill'):
-            df = dfc.fillna(method='ffill').fillna(method='bfill')
+            df = dfc.ffill().bfill()
         elif replace == 'interpolate':
             df = dfc.interpolate(method='linear', axis=0)
     else:

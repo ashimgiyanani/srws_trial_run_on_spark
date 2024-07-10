@@ -298,7 +298,7 @@ class SpectralAnalysis:
             df_peaks[peak_mode + '_idx'] = df_prop.widths.apply(np.nanargmax).astype('int16').copy()
         # assign the peak index, here we assign prominence index as peak index
         df_peaks['doppler_idx'] = df_peaks[peak_mode+'_idx'].astype('int16', errors='ignore').copy()
-        df_peaks['doppler_peak'] = df_peaks.apply(lambda x: x[x.at[peak_mode+'_idx'].astype('int16')], axis=1).copy()
+        df_peaks['doppler_peak'] = df_peaks.apply(lambda x: x.iloc[x.loc[peak_mode+'_idx'].astype('int16')], axis=1).copy()
 
         # assign information which procedure has been used for peak selection
         df_peaks['qc_flag'] = (np.zeros(len(df_peaks))).astype('int16').copy()
@@ -315,7 +315,7 @@ class SpectralAnalysis:
                 iv = np.nanargmin(np.abs(peaks  - mean_peak))
             except ValueError:
                 iv = 0 
-            return peaks[iv].astype('int'), np.uint16(iv)
+            return peaks.iloc[iv].astype('int'), np.uint16(iv)
 
         applied_df = pd.DataFrame(1, index=outliers.index, columns=['qc_flag'])
         # replace rows which have NaN in all peaks, erroneous rows (probably waiting rows)
@@ -323,9 +323,10 @@ class SpectralAnalysis:
         df_peaks.iloc[idx_nan] = df_peaks.iloc[idx_nan-1].copy()
         df_prop.iloc[idx_nan] = df_prop.iloc[idx_nan-1].copy()
         
-        applied_df[['doppler_peak', 'doppler_idx']] = df_peaks.iloc[outliers.index].apply(closest_peak,axis=1, result_type='expand').copy()
-        df_peaks.update(applied_df)
-        # some points result in error if a peak is closest to the ma_mean and is defined as a peak
+        if not outliers.empty:
+            applied_df[['doppler_peak', 'doppler_idx']] = df_peaks.iloc[outliers.index].apply(closest_peak,axis=1, result_type='expand').copy()
+            df_peaks.update(applied_df)
+            # some points result in error if a peak is closest to the ma_mean and is defined as a peak
 
         # finding peak start and end , h_center and v_center for comparison and further evaluation
         df_prop = pd.concat([df_prop, df_peaks.doppler_idx], axis=1)
@@ -679,7 +680,7 @@ class SpectralAnalysis:
         """correct a series [df_series] for zeros"""
         dfs = df_series.copy()
         dfs[dfs==0] = np.nan
-        dfs = dfs.fillna(method='ffill')
+        dfs = dfs.ffill()
         return dfs
     
     @staticmethod
@@ -884,7 +885,7 @@ if __name__ == "__main__":
     from spectr import SpectralAnalysis
     import pythonAssist as pa
     import matlab2py as m2p
-    from ProcessSRWS import ProcessSRWS
+    from ProcessSRWS_spark import ProcessSRWS
 
     file = os.path.join(workDir, "data", "nacelle_lidar", "2021-11-10T140500+00")
     file = r"z:\\Projekte\\112933-HighRe\\20_Durchfuehrung\\OE410\\SRWS\\Data\\Bowtie1\\2021\\11\\08\2021-11-08T135033+00"

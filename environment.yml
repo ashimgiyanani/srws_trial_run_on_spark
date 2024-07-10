@@ -3,11 +3,23 @@ channels:
   - conda-forge
 dependencies:
   - python=3.9.18
+  - netCDF4
+  - pyarrow
+  - fastparquet
+  - xarray
+  - numpy
   - pip
   - glob2
   - pandas
   - matplotlib
-  - numpy
   - python-dateutil
   - scipy
   - joblib
+  - sqlalchemy
+  - chardet
+  - circle-fit
+  - scipy
+  - plotly
+  - openpyxl
+  - isodate
+
