@@ -1,3 +1,12 @@
 __pycache__/
 .pytest_cache/
 .idea/
+
+# ignore extensions
+*.parq
+*.csv
+*.nc
+*.txt
+
+data/**
+src/memory
