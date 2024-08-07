@@ -50,7 +50,8 @@ class ProcessSRWS:
         self.path = path
         self.inp = inp
 
-    def calc_angles(self, x, y, z, offset):
+    @staticmethod
+    def calc_angles(x, y, z, offset=None):
         #     Input:
         # x - x coordinates
         # y - y coordinates
@@ -193,14 +194,12 @@ class ProcessSRWS:
     # # plt.plot(np.rad2deg(xout[:,1]/-1456.3555556))
     # plt.plot(np.rad2deg(xout[:,0]/-1456.3555556))
     # # plt.plot(xout[:,2])
-    def CampaignConstants(self, coord):
+    def CampaignConstants(self, coord, plot_figure):
         # load modules
         # import pandas as pd
         # import numpy as np
         import circle_fit
         # import matplotlib.pyplot as plt
-        from Rotate_and_translate import Rotate_and_tranlate
-
         # ---Read local positions
         df = pd.read_csv(coord, header=None, delimiter=",")
         df = df.set_axis(['Name', 'Easting', 'Northing','Height'], axis=1)
@@ -289,7 +288,7 @@ class ProcessSRWS:
         # ---Plotting
         df = df.set_index('Name')
         mask = ['TOP CENTER', 'WS1', 'WS2', 'WS3', 'Tower_center', 'BALL CENTER']
-        if self.inp.plot_figure==True:
+        if plot_figure==True:
             fig, ax1 = plt.subplots()
             fig.set_size_inches(18.5, 10.5)
             df.loc[['TOP CENTER', 'Tower_center']].plot(x="Easting", y="Northing", ax=ax1, color='black')
@@ -309,7 +308,7 @@ class ProcessSRWS:
         y = np.array(df.Northing)
         z = np.array(df.Height)
 
-        x_new, y_new, z_new = Rotate_and_tranlate(x,y,z,[Center_coord[0],Center_coord[1],0],0, -alpha+np.pi/2)
+        x_new, y_new, z_new = ProcessSRWS.Rotate_and_translate(x,y,z,[Center_coord[0],Center_coord[1],0],0, -alpha+np.pi/2)
         df_rotate['Easting'] = x_new
         df_rotate['Northing'] = y_new
         df_rotate['Height'] = z_new
@@ -350,13 +349,23 @@ class ProcessSRWS:
         WS3 = [-155.978, 72.3011, 10.72]
         return (WS1, WS2, WS3, elev, azi, df_rotate)
 
+    from typing import Tuple
     @staticmethod
-    def Read_SRWS_bin(file_name, mode, write_spec=False):
-        #     Created on Mon Feb 22 07:58:16 2021
+    def Read_SRWS_bin(file_name: str, mode: str, write_spec: bool=False, **kwargs) -> Tuple[np.ndarray, pd.DataFrame, pd.DataFrame]:
+        """
+        Function that reads data from SRWS and converts it to a numpy array and pandas dataframes.
 
-        #     @author: cbmp
-        #     Function that reads data from SRWS and converts it to a numpy array
-        #     """
+        Parameters:
+        file_name (str): Path to the SRWS binary file.
+        mode (str): Specifies the level of data extraction. Options are 'basic', 'standard', and 'all'.
+        write_spec (bool, optional): If True, a separate pandas DataFrame containing the spectral data will be returned. Defaults to False.
+        kwargs:
+            cols: cols to be read for the data, Timestamps are added to the list automatically spectrum data is not tested (is meant for data)
+
+        Returns:
+        Tuple[np.ndarray, pd.DataFrame, pd.DataFrame]:
+            - np.ndarray: The raw data rea
+
         # Given configurations
         # lambda0 - laser wavelength = 1.55e-6
         # a0 - beam radius at waist = 32e-3
@@ -365,6 +374,8 @@ class ProcessSRWS:
         # import pythonAssist as pa
         # import pandas as pd
         # from datetime import timedelta
+        """
+        cols = kwargs.setdefault('cols', ['Timestamp 1', 'Timestamp 2', 'Timestamp 3', 'Timestamp 4'])
 
         dt= np.dtype([('ID',np.int32),
             ('ComPosition_pm1 1',np.float64),  # commanded position'
@@ -453,6 +464,9 @@ class ProcessSRWS:
             remove_cols = ['Spectrum 1', 'Spectrum 2', 'Spectrum 3', 'Spectrum 4', 'Beta 1', 'Beta 2', 'Beta 3', 'Beta 4','Act Pulse 1','Act Pulse 2', 'Act Pulse 3',]
         elif mode == 'all':
             remove_cols = ['Spectrum 1', 'Spectrum 2', 'Spectrum 3', 'Spectrum 4']
+        elif mode == 'custom':
+            cols = cols + ['Timestamp 1', 'Timestamp 2', 'Timestamp 3', 'Timestamp 4']
+            remove_cols = [x for x in keys if x not in cols]
         else:
             print('Input the mode of data extraction: options (basic, standard, all)')
 
@@ -500,7 +514,7 @@ class ProcessSRWS:
         # replace zeros in timestamps
         time = time.replace(0, np.nan).ffill()
         # get timedelta, store timedeltas as individual timestamps
-        dt = time.diff().fillna(0).astype('uint8')
+        dt = time.diff().fillna(0).astype('int8')
         # preparing the timedelta as a dataframe
         df_dt = pd.DataFrame(dt)
         new_col_names = [f'dt {i}' for i in range(1,dt.shape[1]+1)]
@@ -518,7 +532,12 @@ class ProcessSRWS:
 
         # get the datetime dataframe integrated into the raw df
         df = pd.concat([df,df_dt], axis=1).set_index(T_gen)
-        # spec_df = spec_df.set_index(T_gen)
+        if write_spec:
+            spec_df = spec_df.set_index(T_gen)
+
+        # convert to UTC timestamps
+        df.index = df.index.tz_convert('UTC')
+        spec_df.index = spec_df.index.tz_convert('UTC')
 
         return data, df, spec_df
 
@@ -640,13 +659,28 @@ class ProcessSRWS:
         w = (a*V_1+b*V_2+c*V_3)/denom
         return u,v,w
 
-    def Rotate_and_tranlate(self, x, y, z, Cen, elev, azi):
-        # import numpy as np
+    @staticmethod
+    def Rotate_and_translate(x, y, z, Cen, elev, azi):
+        """
+            Rotate and translate a point (x, y, z) around a specified center (Cen) in 3D space.
 
+            Parameters:
+            - x (float): x-coordinate of the point obtained from motor 2 xyz conversions.
+            - y (float): y-coordinate of the point.
+            - z (float): z-coordinate of the point.
+            - Cen (list or tuple): Center point around which rotation and translation are performed.
+            - elev (float): Elevation angle in radians.
+            - azi (float): Azimuth angle in radians.
+
+            Returns:
+            - xrot (float): Translated and rotated x-coordinate.
+            - yrot (float): Translated and rotated y-coordinate.
+            - zrot (float): Translated and rotated z-coordinate.
+        """
         ax_y = [0, 1, 0]
         ax_z = [0, 0, 1]
-        Rz = self.rotation_matrix(ax_z, azi)
-        Ry = self.rotation_matrix(ax_y, elev)
+        Rz = ProcessSRWS.rotation_matrix(ax_z, azi)
+        Ry = ProcessSRWS.rotation_matrix(ax_y, elev)
         G = np.array([x-Cen[0], y-Cen[1], z-Cen[2]])
         Grot = np.dot(Rz, np.dot(Ry, G))
         xrot = Grot[0, :]
@@ -654,7 +688,8 @@ class ProcessSRWS:
         zrot = Grot[2, :]
         return xrot, yrot, zrot
 
-    def rotation_matrix(self, axis, theta):
+    @staticmethod
+    def rotation_matrix(axis, theta):
         """
         Return the rotation matrix associated with counterclockwise rotation about
         the given axis by theta radians.
@@ -671,16 +706,16 @@ class ProcessSRWS:
         return np.array([[aa + bb - cc - dd, 2 * (bc + ad), 2 * (bd - ac)],
                             [2 * (bc - ad), aa + cc - bb - dd, 2 * (cd + ab)],
                             [2 * (bd + ac), 2 * (cd - ab), aa + dd - bb - cc]])
-
-    def scanner2globelCoord(self, x, y, z, WS, elev, azi):
+    @staticmethod
+    def scanner2globelCoord(x, y, z, WS, elev, azi):
 
         # import numpy as np
         # import pandas as pd
 
         ax_y = [0, 1, 0]
         ax_z = [0, 0, 1]
-        Rz = self.rotation_matrix(ax_z, azi)
-        Ry = self.rotation_matrix(ax_y, elev)
+        Rz = ProcessSRWS.rotation_matrix(ax_z, azi)
+        Ry = ProcessSRWS.rotation_matrix(ax_y, elev)
         G = np.array([x, y, z])
         Grot = np.dot(Rz, np.dot(Ry, G))
         xrot = pd.Series(Grot[0, :]+WS[0])
@@ -788,11 +823,11 @@ class ProcessSRWS:
         # Step 2a: Get all files in folder with data
         filename, _ = os.path.splitext(file)
 
-        if inp.srws_use_corrected_vlos == True:
+        if inp.srws.use_corrected_vlos == True:
             inp.spec = pa.struct()
             inp.spec.test = False
-            inp.spec.height = [1.25, 15]
-            inp.spec.prominence = [0, 15]
+            inp.spec.height = [1.25, 5]
+            inp.spec.prominence = [0.25, 5]
             inp.spec.distance = 3
             inp.spec.width = 1
             inp.spec.threshold = 3500
@@ -805,13 +840,19 @@ class ProcessSRWS:
             inp.spec.mode='median'
             inp.spec.moving_average = False
             inp.spec.interpolate = True
+            inp.spec.n_peaks = 1
+            inp.spec.wlen = 60
 
             # run the vlos estimation from spectra
             _, raw_df, spec_df = self.Read_SRWS_bin(filename, mode='all', write_spec=True)
+            # reduce the cycle time during debugging. 
+            # raw_df = raw_df.iloc[:2000,:]
+            # spec_df = spec_df.iloc[:2000,:]
+            
             vlos_names = [f'vlos_pp {i}' for i in range(1,4)]
             snr_names = [f'snr_pp {i}' for i in range(1,4)]
             objs = [SpectralAnalysis(spec_df['Spectrum {}'.format(i)], inp.spec, raw_df['MaximumValue {}'.format(i)]) for i in range(1,4)]
-            with Parallel(backend="threading") as parallel:
+            with Parallel(n_jobs=3) as parallel:
                 delayed_funcs = [delayed(lambda x:x.RunSpectralAnalysis())(obj) for obj in objs]
                 run_df = parallel(delayed_funcs)
             
@@ -839,8 +880,8 @@ class ProcessSRWS:
         Data_raw = qc.detect_missing(channel_name=ws_names.to_list())
 
         # check time gaps in the dataframe
-        inp.srws_dt = np.diff(Data_raw.index)[1]
-        Data_raw = qc.detect_time_gaps(dt_in=inp.srws_dt, channel_name=None, correct_gaps=False)
+        inp.srws.dt = np.diff(Data_raw.index)[1]
+        Data_raw = qc.detect_time_gaps(dt_in=inp.srws.dt, channel_name=None, correct_gaps=False)
 
         # detect outliers in ws range
         Data_raw = qc.detect_outliers_ws_range(channel_names=ws_names, ranges=[-35, 35])
@@ -868,24 +909,24 @@ class ProcessSRWS:
 
         # Step 3a: Coordinate in Mikael-coordinates system
         # azi = (azi + np.pi) % (2*np.pi)
-        xrot1, yrot1, zrot1 = self.scanner2globelCoord(x1, y1, z1, WS1, elev[0], azi[0])
-        xrot2, yrot2, zrot2 = self.scanner2globelCoord(x2, y2, z2, WS2, elev[1], azi[1])
-        xrot3, yrot3, zrot3 = self.scanner2globelCoord(x3, y3, z3, WS3, elev[2], azi[2])
+        xrot1, yrot1, zrot1 = ProcessSRWS.scanner2globelCoord(x1, y1, z1, WS1, elev[0], azi[0])
+        xrot2, yrot2, zrot2 = ProcessSRWS.scanner2globelCoord(x2, y2, z2, WS2, elev[1], azi[1])
+        xrot3, yrot3, zrot3 = ProcessSRWS.scanner2globelCoord(x3, y3, z3, WS3, elev[2], azi[2])
 
         # actual Theta, Phi and ranges
-        theta1, phi1, R1 = self.calc_angles(x1, y1, z1, offset=None)
-        theta2, phi2, R2 = self.calc_angles(x2, y2, z2, offset=None)
-        theta3, phi3, R3 = self.calc_angles(x3, y3, z3, offset=None)
+        theta1, phi1, R1 = ProcessSRWS.calc_angles(x1, y1, z1)
+        theta2, phi2, R2 = ProcessSRWS.calc_angles(x2, y2, z2)
+        theta3, phi3, R3 = ProcessSRWS.calc_angles(x3, y3, z3)
 
         # commanded Theta, Phi and ranges
-        thetao1, phio1, Ro1 = self.calc_angles(xo1, yo1, zo1, offset=None)
-        thetao2, phio2, Ro2 = self.calc_angles(xo2, yo2, zo2, offset=None)
-        thetao3, phio3, Ro3 = self.calc_angles(xo3, yo3, zo3, offset=None)
+        thetao1, phio1, Ro1 = ProcessSRWS.calc_angles(xo1, yo1, zo1)
+        thetao2, phio2, Ro2 = ProcessSRWS.calc_angles(xo2, yo2, zo2)
+        thetao3, phio3, Ro3 = ProcessSRWS.calc_angles(xo3, yo3, zo3)
 
         # Step 3b: rotated theta, phi and ranges
-        theta1_rot, phi1_rot, _ = self.calc_angles(WS1[0]-xrot1, WS1[1]-yrot1, WS1[2]-zrot1, offset=None)
-        theta2_rot, phi2_rot, _ = self.calc_angles(WS2[0]-xrot2, WS2[1]-yrot2, WS2[2]-zrot2, offset=None)
-        theta3_rot, phi3_rot, _ = self.calc_angles(WS3[0]-xrot3, WS3[1]-yrot3, WS3[2]-zrot3, offset=None)
+        theta1_rot, phi1_rot, _ = ProcessSRWS.calc_angles(WS1[0]-xrot1, WS1[1]-yrot1, WS1[2]-zrot1)
+        theta2_rot, phi2_rot, _ = ProcessSRWS.calc_angles(WS2[0]-xrot2, WS2[1]-yrot2, WS2[2]-zrot2)
+        theta3_rot, phi3_rot, _ = ProcessSRWS.calc_angles(WS3[0]-xrot3, WS3[1]-yrot3, WS3[2]-zrot3)
         theta_rot = (theta1_rot, theta2_rot, theta3_rot)
         phi_rot = (phi1_rot, phi2_rot, phi3_rot)
 
@@ -943,7 +984,10 @@ class ProcessSRWS:
         # Step 4d: Vector quantities using Vlos (DTU)
         Vvec = np.sqrt(vx**2 + vy**2 + vz**2)
         Vhorz = np.sqrt(vx**2 + vy**2)
-        gamma = (np.rad2deg(np.arctan2(vx, vy)) + 90) % 360
+
+        nan_mask = np.isnan(vx) | np.isnan(vy)
+        gamma = np.nan * np.ones(vx.shape)
+        gamma[~nan_mask] = (np.rad2deg(np.arctan2(vx[~nan_mask], vy[~nan_mask])) + 90) % 360
         psi = np.rad2deg(np.arctan2(vz,Vhorz))
         Vhorz12 = np.sqrt(vx12**2 + vy12**2)
         Vhorz23 = np.sqrt(vx23**2 + vy23**2)
@@ -952,7 +996,9 @@ class ProcessSRWS:
         # for post-processed using Vlos(IWES)
         Vvec_pp = np.sqrt(vx_pp**2 + vy_pp**2 + vz_pp**2)
         Vhorz_pp = np.sqrt(vx_pp**2 + vy_pp**2)
-        gamma_pp = (np.rad2deg(np.arctan2(vx_pp, vy_pp)) + 90) % 360
+        nan_mask = np.isnan(vx_pp) | np.isnan(vy_pp)
+        gamma_pp = np.nan * np.ones(vx_pp.shape)
+        gamma_pp[~nan_mask] = (np.rad2deg(np.arctan2(vx_pp[~nan_mask], vy_pp[~nan_mask])) + 90) % 360
         psi_pp = np.rad2deg(np.arctan2(vz_pp,Vhorz_pp))
         Vhorz12_pp = np.sqrt(vx12_pp**2 + vy12_pp**2)
         Vhorz23_pp = np.sqrt(vx23_pp**2 + vy23_pp**2)
@@ -1066,6 +1112,9 @@ class ProcessSRWS:
         # # filter the data corresponding to the hub height
         hubcentre = [125, 0, 125]
         idx_hub = np.where(np.sum(k == hubcentre, axis=1) == 3)
+        if not idx_hub[0].any():
+            mean_pt = [pa.find_nearest(X,xlg.mean()), pa.find_nearest(Y,ylg.mean()), pa.find_nearest(Z,zlg.mean())]
+            idx_hub = np.where(np.sum(k == mean_pt, axis=1) == 3)
         df_H = wfr.iloc[np.ravel(idx_hub), :].set_index(Data.index[np.ravel(idx_hub)])
 
         # filter the data corresponding to hubheight across the rotor
@@ -1103,9 +1152,7 @@ class ProcessSRWS:
         """
         import pythonAssist as pa
         import json
-        import netCDF4
         import xarray as xr
-        import numpy as np
         from sqlalchemy import (Table, Column, Integer, String, ForeignKey, MetaData, insert, create_engine, Enum, \
             Float, select, Boolean, DateTime, Interval, ARRAY, )
         from sqlalchemy.orm import (relationship, declarative_base, registry, scoped_session, sessionmaker, Session, backref, mapped_column)
@@ -1290,11 +1337,11 @@ class ProcessSRWS:
             import pythonAssist as pa
             inp = pa.struct()
             inp.srws = pa.struct()
-            inp.srws_path_root = r"z:\Projekte\112933-HighRe\20_Durchfuehrung\OE410\SRWS\Data\Bowtie1_unzipped"
-            inp.srws_coord = r"C:\Users\giyash\OneDrive - Fraunhofer\Python\Scripts\HighRe\src\BREMERHAVEN TOT.txt"
+            inp.srws.path.root = r"z:\Projekte\112933-HighRe\20_Durchfuehrung\OE410\SRWS\Data\Bowtie1_unzipped"
+            inp.srws.coord = r"C:\Users\giyash\OneDrive - Fraunhofer\Python\Scripts\HighRe\src\BREMERHAVEN TOT.txt"
         # get the size and other details of files
-            inp.srws_regStr = "*2022-04-26T181[0|1]*[!.zip][!.txt]"
-            Data, Data_mean, Data_std, Data_min, Data_max, df_H, df_bowtie, df_m = FnConvertRawData(inp, inp.srws_regStr, inp.srws_coord)
+            inp.srws.regStr = "*2022-04-26T181[0|1]*[!.zip][!.txt]"
+            Data, Data_mean, Data_std, Data_min, Data_max, df_H, df_bowtie, df_m = FnConvertRawData(inp, inp.srws.regStr, inp.srws.coord)
         
         modules required: see above in the preamble
         classes required: ProcessSRWS, FileOperations, 
@@ -1314,53 +1361,15 @@ class ProcessSRWS:
 
     #------------- BEGIN CODE --------------
         from dateutil import parser
+        from joblib import Parallel, delayed
         import pythonAssist as pa
-        from datetime import timezone
-        import logging
-        import traceback
-        from FileOperations import FileOperations
-        from metadata_helpers import df2mi
-        import netCDF4
-        import xarray as xr
 
         # Step 1: Get measurement campaign information
-        campaign_constants = self.CampaignConstants(inp.srws_coord)
+        campaign_constants = self.CampaignConstants(inp.srws.coord, inp.plot_figure)
 
         # read the number of files to be read, unzip if necessary
         Nfiles = 0
-        base_path = os.path.join(inp.target_path, 'data', 'Bowtie1', 'parquet')
-        all_files = glob.glob(os.path.join(inp.srws_path_root, inp.srws_regStr), recursive=True)
-
-        # remove completed files from the files to be converted
-        if (inp.srws_path_error_files != None) & (inp.srws_path_finished_files != None):
-            completed_files_duobook = glob.glob(os.path.join(base_path, 'data*.parq'))
-            completed_files_onedrive = glob.glob(os.path.join(inp.workDir, 'data', 'Bowtie1', 'parquet', 'data*.parq'))
-            completed_files = completed_files_duobook + completed_files_onedrive
-            completed_dates = [os.path.splitext(os.path.basename(cf).split('_')[1])[0] for cf in completed_files]
-            with open(inp.srws_path_finished_files, 'r') as fp:
-                finished_dates = fp.read().splitlines()
-            finished_dates = [pd.to_datetime(fd, utc=True).strftime("%Y%m%dT%H%M%S%Z%z") for fd in finished_dates]
-            completed_dates = sorted(set(completed_dates+finished_dates))
-            # remove files from the list of srws files that had some error in the past, these files will be skipped
-            with open(inp.srws_path_error_files, 'r') as fp:
-                error_dates = fp.read().splitlines()[1:]
-            error_dates = [pd.to_datetime(e, utc=True).strftime("%Y%m%dT%H%M%S%Z%z") for e in error_dates]
-            all_files = sorted(all_files[:])
-            print(f'[{pa.now()}]: Reading directories for files completed')
-
-            # removing action on qualified files
-            for f in all_files[:]:
-                if (pd.to_datetime(os.path.basename(f), utc=True) <= pd.to_datetime("2021-10-25T000000+02", utc=True)):
-                    all_files.remove(f)
-                    print(f"removing files before HighRe campaign: {f}")
-                elif pd.to_datetime(os.path.basename(f), utc=True).strftime("%Y%m%dT%H%M%S%Z%z") in completed_dates:
-                    all_files.remove(f)
-                    print(f"removing completed files: {f}")
-                elif pd.to_datetime(os.path.basename(f), utc=True).strftime("%Y%m%dT%H%M%S%Z%z") in error_dates:
-                    all_files.remove(f)
-                    print(f"removing error files: {f}")
-        else:
-            all_files = sorted(all_files[:])
+        files = glob.glob(os.path.join(inp.srws.path.root, inp.srws.regStr), recursive=True)
 
         # Initialization
         DATA, Data_Mean, Data_Std, Data_Max = pd.DataFrame(),pd.DataFrame(),pd.DataFrame(),pd.DataFrame()
@@ -1370,87 +1379,103 @@ class ProcessSRWS:
         data_1min = pa.struct()
         base_path = os.path.join(self.inp.target_path, 'data', 'Bowtie1', 'parquet')
 
-        for file in sorted(all_files[:]):
+        for file in sorted(files[:]):
+            filename, _ = os.path.splitext(file)
+            files_tstart = parser.parse(os.path.basename(file)[-20:])
             try:
-                filename, _ = os.path.splitext(file)
-                files_tstart = parser.parse(os.path.basename(file)[-20:]).astimezone(timezone.utc)
+                Nfiles += 1
+                Data, df_H, df_bowtie, df_m, Data_mean, Data_std, Data_min, Data_max, spec_df, meta_ds =  self.srws2df(inp, file, campaign_constants, Nfiles)
+                print('[{0}]: Files {1}/{2} {3} completed'.format(pa.now(), Nfiles, len(files), filename[-20:]))
+            except OverflowError:
+                Nfiles += 1
+                print('[{0}]: File {1}/{2} {3} skipped (OverflowError)'.format(pa.now(), Nfiles, len(files), filename[-20:]))
+            # Concatenate the last 10 files
+            if inp.srws.merge == True:  # dataframe concatenate yes=True, no=False
+                DATA = pd.concat([DATA, Data])
+                Data_Mean = pd.concat([Data_Mean, Data_mean])
+                Data_Std = pd.concat([Data_Std, Data_std])
+                Data_Min = pd.concat([Data_Min, Data_min])
+                Data_Max = pd.concat([Data_Max, Data_max])
+                DF_H = pd.concat([DF_H, df_H])
+                DF_bowtie = pd.concat([DF_bowtie, df_bowtie])
+                DF_m = pd.concat([DF_m, df_m])
+                spec_DF = pd.concat([spec_DF, spec_df])
+            elif (inp.write_parquet == True) & (inp.srws.merge==False):
+                # base_path = os.path.join(self.inp.workDir, 'data', 'parquet')
                 filepath = os.path.join(f'{base_path}', f'data_{files_tstart.strftime("%Y%m%dT%H%M%S%Z%z")}.parq')
-                try:
-                    Nfiles += 1
-                    data_raw, df_H, df_bowtie, df_m, _, _, _, _, _ =  self.srws2df(inp, file, campaign_constants, Nfiles)
-                    print('[{0}]: Files {1}/{2} {3} completed'.format(pa.now(), Nfiles, len(all_files), filename[-20:]))
-                except OverflowError:
-                    Nfiles += 1
-                    print('[{0}]: File {1}/{2} {3} skipped (OverflowError)'.format(pa.now(), Nfiles, len(all_files), filename[-20:]))
-                # Concatenate the last 10 files
-                if inp.srws_merge == True:  # dataframe concatenate yes=True, no=False
-                    DATA = pd.concat([DATA, data_raw])
-                    # Data_Mean = pd.concat([Data_Mean, Data_mean])
-                    # Data_Std = pd.concat([Data_Std, Data_std])
-                    # Data_Min = pd.concat([Data_Min, Data_min])
-                    # Data_Max = pd.concat([Data_Max, Data_max])
-                    DF_H = pd.concat([DF_H, df_H])
-                    DF_bowtie = pd.concat([DF_bowtie, df_bowtie])
-                    DF_m = pd.concat([DF_m, df_m])
-                    # spec_DF = pd.concat([spec_DF, spec_df])
-                else:
-                    DATA = data_raw.copy()
-                    DF_H = df_H.copy()
-                    DF_bowtie = df_bowtie.copy()
-                    DF_m = df_m.copy()
+                # write to parquet files
+                pa.write_parquet(filepath, Data)
+                pa.write_fastparquet(os.path.join(f'{base_path}', f'df_H.parq'), df_H)
+                pa.write_fastparquet(os.path.join(f'{base_path}', f'df_bowtie.parq'), df_bowtie)
+                pa.write_fastparquet(os.path.join(f'{base_path}', f'df_m.parq'), df_m)
+                # rename to standardize
+                DATA = Data.copy()
+                DF_H = df_H.copy()
+                DF_bowtie = df_bowtie.copy()
+                DF_m = df_m.copy()
 
-                # write to ************************parquet files**************************************
-                pa.write_parquet(filepath, DATA)
-                pa.write_fastparquet(os.path.join(f'{base_path}', f'df_H_{files_tstart.strftime("%Y%m%dT%H%M%S%Z%z")}.parq'), DF_H)
-                pa.write_fastparquet(os.path.join(f'{base_path}', f'df_bowtie_{files_tstart.strftime("%Y%m%dT%H%M%S%Z%z")}.parq'), DF_bowtie)
-                pa.write_fastparquet(os.path.join(f'{base_path}', f'df_m_{files_tstart.strftime("%Y%m%dT%H%M%S%Z%z")}.parq'), DF_m)
+            # write to ************************parquet files**************************************
+            pa.write_parquet(filepath, DATA)
+            pa.write_fastparquet(os.path.join(f'{base_path}', f'df_H_{files_tstart.strftime("%Y%m%dT%H%M%S%Z%z")}.parq'), DF_H)
+            pa.write_fastparquet(os.path.join(f'{base_path}', f'df_bowtie_{files_tstart.strftime("%Y%m%dT%H%M%S%Z%z")}.parq'), DF_bowtie)
+            pa.write_fastparquet(os.path.join(f'{base_path}', f'df_m_{files_tstart.strftime("%Y%m%dT%H%M%S%Z%z")}.parq'), DF_m)
 
-                # adding metadata to the srws files
-                if self.inp.add_metadata:
-                    # write to ************************netCDF files***************************************
-                    # convert to a mult-index dataframe
-                    # reg expression to match columns that ^(?!qc) do not match qc at the start, 
-                    # \s? has zero or one nr. of whitespaces, \D with any nonDigit, {} with a number 1,2,3,4 using a for loop, 
-                    # r?$ has zero or one nr. of 'r' at the end
-                    regStr = "^(?!qc).*\s?\D{}r?$"
-                    indexStr = 'srws_nr{}'
-                    nc_base_path = os.path.join(self.inp.target_path, 'data', 'Bowtie1', 'netcdf')
+            # write to ************************netCDF files***************************************
+            # convert to a mult-index dataframe
+            from metadata_helpers import df2mi
+            import xarray as xr
+            # reg expression to match columns that ^(?!qc) do not match qc at the start, 
+            # \s? has zero or one nr. of whitespaces, \D with any nonDigit, {} with a number 1,2,3,4 using a for loop, 
+            # r?$ has zero or one nr. of 'r' at the end
+            regStr = "^(?!qc).*\s?\D{}r?$"
+            indexStr = 'srws_nr{}'
+            nc_base_path = os.path.join(self.inp.target_path, 'data', 'Bowtie1', 'netcdf')
 
-                    _, _, ds_raw = df2mi(DATA, regStr, indexStr)
-                    _, _, ds_H = df2mi(DF_H, regStr, indexStr)
-                    _, _, ds_bowtie = df2mi(DF_bowtie, regStr, indexStr)
-                    _, _, ds_m = df2mi(DF_m, regStr, indexStr)
+            _, _, ds_raw = df2mi(DATA, regStr, indexStr)
+            _, _, ds_H = df2mi(DF_H, regStr, indexStr)
+            _, _, ds_bowtie = df2mi(DF_bowtie, regStr, indexStr)
+            _, _, ds_m = df2mi(DF_m, regStr, indexStr)
 
-                    ds_raw = ProcessSRWS.add_metadata_srws(ds_raw, nc_path=os.path.join(f"{nc_base_path}", f'ds_raw_{files_tstart.strftime("%Y%m%dT%H%M%S%Z%z")}.nc'))
-                    ds_H = ProcessSRWS.add_metadata_srws(ds_H, nc_path=os.path.join(f"{nc_base_path}", f'ds_H_{files_tstart.strftime("%Y%m%dT%H%M%S%Z%z")}.nc'))
-                    ds_bowtie = ProcessSRWS.add_metadata_srws(ds_bowtie, nc_path=os.path.join(f"{nc_base_path}", f'ds_bowtie_{files_tstart.strftime("%Y%m%dT%H%M%S%Z%z")}.nc'))
-                    ds_m = ProcessSRWS.add_metadata_srws(ds_m, nc_path=os.path.join(f"{nc_base_path}", f'ds_m_{files_tstart.strftime("%Y%m%dT%H%M%S%Z%z")}.nc'))
-                    meta_ds = self.add_metadata(all_files)
+        # combine dataframes into structs
+        # data_raw = DATA
+        # data_hub = DF_H
+        # data_1min = pa.struct()
+        # data_1min.mean = Data_Mean
+        # data_1min.std = Data_Std
+        # data_1min.min = Data_Min
+        # data_1min.max = Data_Max
+        # data_1min.bowtie = DF_bowtie
+        # data_1min.hub_mean = DF_m
 
-                    ds_raw.attrs = meta_ds.attrs
-                    ds_H.attrs = meta_ds.attrs
-                    ds_bowtie.attrs = meta_ds.attrs
-                    ds_m.attrs = meta_ds.attrs
-                else:
-                    ds_raw = None
-                    ds_H = None
-                    ds_bowtie = None
-                    ds_m = None
-                
-                if (inp.srws_path_error_files != None) & (inp.srws_path_finished_files != None):
-                    # add reconstructed files to finished_files.txt
-                    FileOperations.write_paths_to_file(inp.srws_path_finished_files, [os.path.basename(file)])
-                    print(f"[{pa.now()}]: Adding {os.path.basename(file)} to finished_files.txt")
-            except Exception as e:
-                FileOperations.write_paths_to_file(inp.srws_path_error_files, [os.path.basename(file)])
-                print(f"[{pa.now()}]: Adding {os.path.basename(file)} to error_files.txt")
+        # with Parallel(n_jobs=6) as parallel:
+        #     delayed_funcs = [delayed(self.srws2df)(inp, file, campaign_constants, Nfiles) for file in sorted(files[:])]
+        #     run_df = parallel(delayed_funcs)
+        #     DATA, DF_H, data_1min, data_raw, data_hub, DF_bowtie, DF_m = zip(*run_df)
 
-                logging.error(traceback.format_exc())
-                ds_raw = None
-                ds_H = None
-                ds_bowtie = None
-                ds_m = None
+        # print Statements    
+        # print('[{1}]: Saved all data to {0}'.format(path_Data, pa.now()))
+        # print('[{1}]: Saved data at hub height to {0}'.format(path_df_H, pa.now()))
+        # print('[{1}]: Saved data averaged over the scan pattern to {0}'.format(path_df_bowtie, pa.now()))
+        # print('[{1}]: Saved all data to {0}'.format(path_df_m, pa.now()))
 
+        if (inp.write_parquet == True) & (inp.srws.merge==True):
+            pa.write_parquet(os.path.join(self.inp.target_path,'data', 'Bowtie1','parquet',f'data_raw.parq'), data_raw)
+            # pa.write_parquet(os.path.join(self.inp.target_path,'data','parquet',f'data_1min_mean.parq'), data_1min.mean)
+            pa.write_parquet(os.path.join(self.inp.target_path,'data', 'Bowtie1','parquet',f'data_hub.parq'), data_hub)
+            print('[{0}]: Saved srws to parquet files'. format(pa.now()))
+
+            # adding metadata to the srws files
+            if self.inp.add_metadata:
+                ds_raw = ProcessSRWS.add_metadata_srws(ds_raw, nc_path=os.path.join(f"{nc_base_path}", f'ds_raw_{files_tstart.strftime("%Y%m%dT%H%M%S%Z%z")}.nc'))
+                ds_H = ProcessSRWS.add_metadata_srws(ds_H, nc_path=os.path.join(f"{nc_base_path}", f'ds_H_{files_tstart.strftime("%Y%m%dT%H%M%S%Z%z")}.nc'))
+                ds_bowtie = ProcessSRWS.add_metadata_srws(ds_bowtie, nc_path=os.path.join(f"{nc_base_path}", f'ds_bowtie_{files_tstart.strftime("%Y%m%dT%H%M%S%Z%z")}.nc'))
+                ds_m = ProcessSRWS.add_metadata_srws(ds_m, nc_path=os.path.join(f"{nc_base_path}", f'ds_m_{files_tstart.strftime("%Y%m%dT%H%M%S%Z%z")}.nc'))
+                meta_ds = self.add_metadata(files)
+
+                ds_raw.attrs = meta_ds.attrs
+                ds_H.attrs = meta_ds.attrs
+                ds_bowtie.attrs = meta_ds.attrs
+                ds_m.attrs = meta_ds.attrs
         #------------- END OF CODE ------------
 
         return DATA, DF_H, DF_bowtie, DF_m, ds_raw, ds_H, ds_bowtie, ds_m 
@@ -1466,7 +1491,7 @@ class ProcessSRWS:
         from FileOperations import FileOperations
 
         # Step 1: Get measurement campaign information
-        campaign_constants = self.CampaignConstants(inp.srws_coord)
+        campaign_constants = self.CampaignConstants(inp.srws.coord, inp.plot_figure)
 
         # Initialization
         DATA, DF_H, DF_bowtie, DF_m = pd.DataFrame(),pd.DataFrame(),pd.DataFrame(),pd.DataFrame()
@@ -1478,46 +1503,46 @@ class ProcessSRWS:
         print(f'[{pa.now()}]: Reading directories for files')
         Nchunks, Nfiles = 0, 0
         base_path = os.path.join(inp.target_path, 'data', 'Bowtie1', 'parquet')
-        all_files = glob.glob(os.path.join(inp.srws_path_root, inp.srws_regStr), recursive=True)
+        all_files = glob.glob(os.path.join(inp.srws.path.root, inp.srws.regStr), recursive=True)
         # remove completed files from the files to be converted
         completed_files_duobook = glob.glob(os.path.join(base_path, 'data*.parq'))
         completed_files_onedrive = glob.glob(os.path.join(inp.workDir, 'data', 'Bowtie1', 'parquet', 'data*.parq'))
         completed_files = completed_files_duobook + completed_files_onedrive
         completed_dates = [os.path.splitext(os.path.basename(cf).split('_')[1])[0] for cf in completed_files]
-        with open(inp.srws_path_finished_files, 'r') as fp:
+        with open(inp.srws.path.finished_files, 'r') as fp:
             finished_dates = fp.read().splitlines()
         finished_dates = [pd.to_datetime(fd, utc=True).strftime("%Y%m%dT%H%M%S%Z%z") for fd in finished_dates]
         completed_dates = sorted(set(completed_dates+finished_dates))
         # remove files from the list of srws files that had some error in the past, these files will be skipped
-        with open(inp.srws_path_error_files, 'r') as fp:
+        with open(inp.srws.path.error_files, 'r') as fp:
             error_dates = fp.read().splitlines()[1:]
         error_dates = [pd.to_datetime(e, utc=True).strftime("%Y%m%dT%H%M%S%Z%z") for e in error_dates]
         all_files = sorted(all_files[:])
         print(f'[{pa.now()}]: Reading directories for files completed')
 
         # # special lines
-        for f in all_files[:]:
-            if (pd.to_datetime(os.path.basename(f), utc=True) <= pd.to_datetime("2021-10-25T000000+02", utc=True)):
-                all_files.remove(f)
-                print(f"files before HighRe campaign: {f}")
-            elif pd.to_datetime(os.path.basename(f), utc=True).strftime("%Y%m%dT%H%M%S%Z%z") in completed_dates:
-                all_files.remove(f)
-                print(f"removing completed files: {f}")
-            elif pd.to_datetime(os.path.basename(f), utc=True).strftime("%Y%m%dT%H%M%S%Z%z") in error_dates:
-                all_files.remove(f)
-                print(f"removing error files: {f}")
+        # for f in all_files[:]:
+        #     if (pd.to_datetime(os.path.basename(f), utc=True) <= pd.to_datetime("2021-10-25T000000+02", utc=True)):
+        #         all_files.remove(f)
+        #         print(f"files before HighRe campaign: {f}")
+        #     elif pd.to_datetime(os.path.basename(f), utc=True).strftime("%Y%m%dT%H%M%S%Z%z") in completed_dates:
+        #         all_files.remove(f)
+        #         print(f"removing completed files: {f}")
+        #     elif pd.to_datetime(os.path.basename(f), utc=True).strftime("%Y%m%dT%H%M%S%Z%z") in error_dates:
+        #         all_files.remove(f)
+        #         print(f"removing error files: {f}")
 
-        roll_chunks = 12 # user input
+        roll_chunks = 1 # user input
         chunks = [all_files[i:i+roll_chunks] for i in range(0,len(all_files),roll_chunks)]
         if len(all_files) <= 20:
             Njobs = 1
         else:
-            Njobs = 3
+            Njobs = 6
 
         for files in chunks:
             Nchunks += 1
             try:
-                with Parallel(n_jobs=3) as parallel:
+                with Parallel(n_jobs=Njobs, timeout=1800) as parallel:
                     delayed_funcs = [delayed(self.srws2df)(inp, file, campaign_constants, Nfiles) for file in sorted(files[:])]
                     run_df = parallel(delayed_funcs)
                     # Data_chunk, df_H_chunk, df_bowtie_chunk, df_m_chunk, Data_mean_chunk, Data_std_chunk, Data_min_chunk, Data_max_chunk = zip(*run_df)
@@ -1529,7 +1554,7 @@ class ProcessSRWS:
                     filepath = os.path.join(f'{base_path}', f'data_{files_tstart.strftime("%Y%m%dT%H%M%S%Z%z")}.parq')
                     data_raw, df_H, df_bowtie, df_m, _, _, _, _, _ = zip(df_i)
 
-                    if inp.srws_merge == True:
+                    if inp.srws.merge == True:
                         DATA = pd.concat([DATA, data_raw[0]])
                         DF_H = pd.concat([DF_H, df_H[0]])
                         DF_bowtie = pd.concat([DF_bowtie, df_bowtie[0]])
@@ -1540,11 +1565,12 @@ class ProcessSRWS:
                         DF_bowtie = df_bowtie[0]
                         DF_m = df_m[0]
 
-                    # write to ************************parquet files**************************************
-                    pa.write_parquet(filepath, DATA)
-                    pa.write_fastparquet(os.path.join(f'{base_path}', f'df_H_{files_tstart.strftime("%Y%m%dT%H%M%S%Z%z")}.parq'), DF_H)
-                    pa.write_fastparquet(os.path.join(f'{base_path}', f'df_bowtie_{files_tstart.strftime("%Y%m%dT%H%M%S%Z%z")}.parq'), DF_bowtie)
-                    pa.write_fastparquet(os.path.join(f'{base_path}', f'df_m_{files_tstart.strftime("%Y%m%dT%H%M%S%Z%z")}.parq'), DF_m)
+                    if self.inp.write_parquet:
+                        # write to ************************parquet files**************************************
+                        pa.write_parquet(filepath, DATA)
+                        pa.write_fastparquet(os.path.join(f'{base_path}', f'df_H_{files_tstart.strftime("%Y%m%dT%H%M%S%Z%z")}.parq'), DF_H)
+                        pa.write_fastparquet(os.path.join(f'{base_path}', f'df_bowtie_{files_tstart.strftime("%Y%m%dT%H%M%S%Z%z")}.parq'), DF_bowtie)
+                        pa.write_fastparquet(os.path.join(f'{base_path}', f'df_m_{files_tstart.strftime("%Y%m%dT%H%M%S%Z%z")}.parq'), DF_m)
 
                     # write to ************************netCDF files***************************************
                     # convert to a mult-index dataframe
@@ -1555,6 +1581,7 @@ class ProcessSRWS:
                     # r?$ has zero or one nr. of 'r' at the end
                     # regStr = "^(?!qc).*\s?\D{}r?$"
                     # indexStr = 'srws_nr{}'
+                    # nc_base_path = os.path.join(self.inp.target_path, 'data', 'Bowtie1', 'netcdf')
 
                     # _, _, ds_raw = df2mi(DATA, regStr, indexStr)
                     # _, _, ds_H = df2mi(DF_H, regStr, indexStr)
@@ -1581,12 +1608,12 @@ class ProcessSRWS:
                         ds_m = None
 
                 # add reconstructed files to finished_files.txt
-                FileOperations.write_paths_to_file(inp.srws_path_finished_files, [os.path.basename(f) for f in files])
+                FileOperations.write_paths_to_file(inp.srws.path.finished_files, [os.path.basename(f) for f in files])
                 print(f"[{pa.now()}]: Adding {os.path.basename(files[0])}-{os.path.basename(files[-1])} to finished_files.txt")
             
                 # del Data, df_H, df_bowtie, df_m 
             except Exception as e:
-                FileOperations.write_paths_to_file(inp.srws_path_error_files, [os.path.basename(f) for f in files])
+                FileOperations.write_paths_to_file(inp.srws.path.error_files, [os.path.basename(f) for f in files])
                 print(f"[{pa.now()}]: Adding {os.path.basename(files[0])}-{os.path.basename(files[-1])} to error_files.txt")
                 logging.error(traceback.format_exc())
                 DATA, DF_H, DF_bowtie, DF_m, ds_raw, ds_H, ds_bowtie, ds_m = None, None, None, None, None, None, None, None
@@ -1614,7 +1641,9 @@ class ProcessSRWS:
         import pandas as pd
         from DataQualityFlags import quality_control as qc
         import ast
-        from ProcessSRWS_spark import ProcessSRWS
+        from ProcessSRWS import ProcessSRWS
+
+
 
         # read in the metadata from the excel file
         metadata_xl_path = r"../srws_trial_run/Metadata.xlsx"
@@ -1624,7 +1653,7 @@ class ProcessSRWS:
         # the ranges in excel are read as string, string_eval converts them from string to list type
         srws_variables['valid_range'] = srws_variables.valid_range.apply(qc.string_eval)
         # using set theory to remove some useless variables
-        valid_variables = (ds.variables.mapping.keys()-set({ky for ky in ds.sizes.keys()}))
+        valid_variables = (ds.variables.mapping.keys()-set({ky for ky in ds.dims.keys()}))
         for v in sorted(valid_variables):
             idx = srws_variables[srws_variables.name==v].index
             flg = qc.qc_range_testing(ds[v].median().values, srws_variables.loc[idx,'valid_range'].values[0])
@@ -1667,7 +1696,7 @@ class ProcessSRWS:
                 ]
             dtu_raw_vars = set([v for v in dtu_raw_vars if v in ds.variables.mapping.keys()])             
             iwes_pp_vars = set({ky: v for ky, v in ds.variables.items() if ky.endswith('_pp')})
-            dtu_pp_vars = ds.variables.mapping.keys() - iwes_pp_vars - dtu_raw_vars - set({ky for ky in ds.sizes.keys()})
+            dtu_pp_vars = ds.variables.mapping.keys() - iwes_pp_vars - dtu_raw_vars - set({ky for ky in ds.dims.keys()})
 
             group_vars = [dtu_raw_vars, dtu_pp_vars, iwes_pp_vars]
             ProcessSRWS.create_nc_groups(ds, groups, group_vars, nc_path)
@@ -1704,7 +1733,7 @@ if __name__ == "__main__":
     inp.srws_use_corrected_vlos = True
     inp.pickle = False
     inp.write_csv=False
-    inp.write_parquet = False
+    inp.write_parquet = True
     inp.generate_stats = False
     inp.filter_data = False
     inp.plot_figure = False
@@ -1736,9 +1765,7 @@ if __name__ == "__main__":
         data_1min = pd.DataFrame(pd.read_pickle(os.path.join(inp.workDir, 'Bowtie1', 'data_1min_mean.pickle')))
     else:
         # convert raw data to 1-min averages,
-        m2p.tic()
-        Data, df_H, df_bowtie, df_m, ds, ds_H, ds_bowtie, ds_m = srws.FnConvertRawData(inp)
-        m2p.toc()
+        Data, df_H, df_bowtie, df_m, ds, ds_H, ds_bowtie, ds_m = srws.mp_FnConvertRawData(inp)
 
     sys.exit('manual')
 
