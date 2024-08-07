@@ -144,9 +144,11 @@ class SpectralAnalysis:
                 self.spec = self.detect_spectral_noisytail(self.spec)
         else:
             if (self.spec.median()==0).sum() >= 32:
-                print("ValueError: many zeros in this spectra")
+                raise ValueError("ValueError: many zeros in this spectra")
+            elif (self.spec.median().diff()==0).sum() >= 256:
+                raise ValueError("ValueError: many duplicated vals in this spectra")
             elif self.max_value.mean() > 2**16:
-                print("ValueError: maximum value too high with high noise at tail")
+                raise ValueError("maximum value too high with high noise at tail")
 
 
         # scale the spectrum from normalized to true state
@@ -167,7 +169,7 @@ class SpectralAnalysis:
             loops += 1
             if loops == 4:
                 print(f"[{pa.now()}]: maximum nr of loops passed, using default argmax value")
-                peaks = spec_median.argmax()
+                peaks = np.array([spec_median.argmax()])
                 break
 
         idx = abs(peaks-Ncols/2).argmax()
@@ -256,11 +258,29 @@ class SpectralAnalysis:
         spec_flat = spec_flat.dropna(axis=0, how='all')
 
         # find the peaks and properties
-        S_peak = spec_flat.apply(find_peaks,height=self.inp.height, distance=self.inp.distance, prominence=self.inp.prominence, width=self.inp.width, wlen=self.inp.wlen, axis=1, result_type='expand')
+        def wrapper_findpeaks(x, height=None, threshold=None, distance=None, prominence=None, width=None, wlen=None):
+            """wrapper around find_peaks to solve the problem of errors"""
+            from scipy.signal import find_peaks
+            from scipy.signal._peak_finding_utils import PeakPropertyWarning
+
+            try:
+                pks, props = find_peaks(x, height, threshold, distance, prominence, width, wlen)
+            except PeakPropertyWarning:
+                pks, props = find_peaks(x, height, threshold, distance, prominence)
+                props['widths'] = np.tile(np.nan, len(props['peak_heights']))
+                props['width_heights'] = np.tile(np.nan, len(props['peak_heights']))
+                props['right_ips'] = np.tile(np.nan, len(props['peak_heights']))
+                props['left_ips'] = np.tile(np.nan, len(props['peak_heights']))
+
+            return pks, props
+
+        S_peak = spec_flat.apply(wrapper_findpeaks,height=self.inp.height, distance=self.inp.distance, prominence=self.inp.prominence, width=self.inp.width, wlen=self.inp.wlen, axis=1, result_type='expand')
 
         # the arrays in df_prop are padded in find_best_peaks
         df_peaks = pd.DataFrame(S_peak[0].to_list()).add_prefix('peaks_')
         df_prop = pd.DataFrame(S_peak[1].to_list())
+        if df_peaks.empty:
+            df_peaks = pd.DataFrame(np.nan, index=df_peaks.index, columns=['peaks_0'])
 
         # find the peaks where no peaks were detected with the default setting
         no_peaks = df_peaks[df_peaks.isna().sum(axis=1) == df_peaks.shape[1]]
@@ -270,7 +290,7 @@ class SpectralAnalysis:
             self.inp.height = [self.inp.height[0] - default_reducer, self.inp.height[1]+10]
             self.inp.prominence = [self.inp.height[0] - default_reducer, self.inp.prominence[1]+10]
             # find peaks with relaxed parameters
-            S_no_peaks = spec_flat.iloc[no_peaks.index,:].apply(find_peaks, height=self.inp.height, prominence=self.inp.prominence, width=1, wlen = self.inp.wlen, axis=1, result_type='expand')
+            S_no_peaks = spec_flat.iloc[no_peaks.index,:].apply(wrapper_findpeaks, height=self.inp.height, prominence=self.inp.prominence, width=1, wlen = self.inp.wlen, axis=1, result_type='expand')
             # append the output to peaks and props            
             df_no_peaks = pd.DataFrame(S_no_peaks[0].to_list(), index=no_peaks.index).add_prefix('peaks_')
             df_no_prop = pd.DataFrame(S_no_peaks[1].to_list(), index=no_peaks.index)
@@ -292,7 +312,7 @@ class SpectralAnalysis:
 
             # pad the row to match the n
             # if len(row['peak_heights']) < n:
-            def pad_cell(row, n=3, val=None):
+            def pad_cell(row, n=n, val=None):
 
                 row = pd.Series({k: np.pad(v,(0,n-len(v)), mode='constant', constant_values=val)  for k, v in row.items()})    
                 return row
@@ -366,6 +386,16 @@ class SpectralAnalysis:
 
             return dfs
 
+        def closest_peak(df_peaks_row):
+            """function to find the closest peak to the moving average"""
+            import numpy as np
+            peaks = df_peaks_row.filter(like='peaks_')
+            mean_peak = df_peaks_row.ma_mean
+            try:
+                iv = np.nanargmin(np.abs(peaks  - mean_peak))
+            except ValueError:
+                iv = 0 
+            return peaks.iloc[iv].astype('int'), np.uint16(iv)
         
         # sort the columns in the dataframe
         df_peaks = df_peaks.reindex(sorted(df_peaks.columns, key=lambda x: float(x.split('_')[1])), axis=1)
@@ -385,7 +415,7 @@ class SpectralAnalysis:
             df_peaks[peak_mode + '_idx'] = df_peaks.filter(like='peaks').apply(find_max_index, axis=1).astype('int16').copy()
         # find peak based on highest prominence
         elif peak_mode == 'prom':
-            df_peaks[peak_mode + '_idx'] = df_prop.prominences.apply(pa._nanargmax, ax=0).astype('int16',errors='ignore').copy()
+            df_peaks[peak_mode + '_idx'] = df_prop.prominences.apply(pa._nanargmax, ax=0).astype('int16',errors='ignore').values
         # find peaks based on maximum widths
         elif peak_mode == 'width':
             df_peaks[peak_mode + '_idx'] = df_prop.widths.apply(np.nanargmax).astype('int16').copy()
@@ -397,43 +427,35 @@ class SpectralAnalysis:
 
 
         # assign the peak index, here we assign prominence index as peak index
-#         df_peaks['doppler_idx'] = df_peaks[peak_mode+'_idx'].astype('int16', errors='ignore').copy()
-#         df_peaks['doppler_peak'] = df_peaks.apply(lambda x: x.filter(like='peaks').iloc[x.loc[peak_mode+'_idx'].astype('int16')].astype('int16'), axis=1).copy()
-#         
-#         # assign information which procedure has been used for peak selection
-#         df_peaks['qc_flag'] = (np.zeros(len(df_peaks))).astype('int16').copy()
-# 
-#         # 2nd iteration using moving window averaged outlier estimates.
-#         outliers,df_peaks['ma_mean'], df_peaks['ma_std'] = pa.signal_outliers(df_peaks.doppler_peak, win_length=11, sigma=1, detrend=True)
-# 
-#         def closest_peak(df_peaks_row):
-#             """function to find the closest peak to the moving average"""
-#             import numpy as np
-#             peaks = df_peaks_row.filter(like='peaks_')
-#             mean_peak = df_peaks_row.ma_mean
-#             try:
-#                 iv = np.nanargmin(np.abs(peaks  - mean_peak))
-#             except ValueError:
-#                 iv = 0 
-#             return peaks.iloc[iv].astype('int'), np.uint16(iv)
-# 
-#         applied_df = pd.DataFrame(1, index=outliers.index, columns=['qc_flag'])
+        if self.inp.n_peaks == 1:
+            df_peaks['doppler_idx'] = df_peaks[peak_mode+'_idx'].astype('int16', errors='ignore').copy()
+            df_peaks['doppler_peak'] = df_peaks.apply(lambda x: x.filter(like='peaks').iloc[x.loc[peak_mode+'_idx'].astype('int16')].astype('int16'), axis=1).copy()
+            
+            # assign information which procedure has been used for peak selection
+            df_peaks['qc_flag'] = (np.zeros(len(df_peaks))).astype('int16').copy()
+
+            # 2nd iteration using moving window averaged outlier estimates.
+            outliers,df_peaks['ma_mean'], df_peaks['ma_std'] = pa.signal_outliers(df_peaks.doppler_peak, win_length=11, sigma=1, detrend=True)
+
+            applied_df = pd.DataFrame(1, index=outliers.index, columns=['qc_flag'])
+        else:
+            outliers = pd.DataFrame()
+
         # replace rows which have NaN in all peaks, erroneous rows (probably waiting rows)
+        df_peaks = df_peaks.reset_index()
         idx_nan = df_peaks[df_peaks.filter(like='peaks_').isna().all(axis=1)].index
-        df_peaks.iloc[idx_nan] = df_peaks.iloc[idx_nan.shift(1)].copy()
-        df_prop.iloc[idx_nan] = df_prop.iloc[idx_nan.shift(1)].copy()
+        df_peaks.iloc[idx_nan] = df_peaks.iloc[idx_nan-1].copy()
+        df_prop.iloc[idx_nan] = df_prop.iloc[idx_nan-1].copy()
+        df_peaks = df_peaks.set_index(df_peaks['index'], drop=True)
+        df_prop = df_prop.set_index(df_peaks['index'])
         
-        # assign df_peaks with datetime index
-        df_peaks.index = spec_flat.index
-        df_prop.index = spec_flat.index
-        
-        # if not outliers.empty:
-        #     applied_df[['doppler_peak', 'doppler_idx']] = df_peaks.iloc[outliers.index].apply(closest_peak,axis=1, result_type='expand').copy()
-        #     df_peaks.update(applied_df.astype('int16'))
+        if  (self.inp.n_peaks ==1) & (not outliers.empty):
+            applied_df[['doppler_peak', 'doppler_idx']] = df_peaks.iloc[outliers.index].apply(closest_peak,axis=1, result_type='expand').copy()
+            df_peaks.update(applied_df.astype('int16'))
         # some points result in error if a peak is closest to the ma_mean and is defined as a peak
 
 
-        dfs = gen_peak_prop_df(df_peaks, df_prop)
+        dfs = gen_peak_prop_df(df_peaks, df_prop, n = self.inp.n_peaks)
 
         # dfs = {}
         # for i in range(1,4):         
@@ -500,8 +522,12 @@ class SpectralAnalysis:
     def zero_spectra_correction(spec):
         # correct spectra with zeros in all fft bins (e.g. waiting spectras for other sensors)
         spectrum = spec.copy()
+        spectrum = spectrum.reset_index(drop=True)
         idx = spectrum[spectrum.sum(axis=1)==0].index
-        spectrum.loc[idx,:] = spectrum.loc[idx.shift(1),:].copy(deep=True)
+        if not idx.empty:
+            spectrum.iloc[idx,:] = spectrum.iloc[idx-1,:].copy(deep=True)
+
+        spectrum = spectrum.set_index(spec.index)
         # print(f"{pa.now()}: spectrum corrected for zero values in all fft bins")
         return spectrum
 
@@ -638,7 +664,7 @@ class SpectralAnalysis:
         df_peaks, df_prop = find_peaks(np.ravel(spec_1d), height=self.inp.height, distance=self.inp.distance, prominence=self.inp.prominence, width=self.inp.width)
 
         if (np.sum(np.isnan(df_peaks))!=0) or (len(df_peaks)==0):
-            df_peaks, df_prop = find_peaks(np.ravel(spec_1d), height=self.inp.relaxed_height, distance=self.inp.distance, prominence=self.inp.prominence, width=self.inp.width)
+            df_peaks, df_prop = find_peaks(np.ravel(spec_1d), height=self.inp.relaxed_height, distance=self.inp.distance, prominence=self.inp.relaxed_prominence, width=self.inp.width)
 
         peak_idx = np.argmax(np.abs(df_peaks - (len(spec_1d)-(len(spec_1d)%2))/2))
         df_prop['doppler_peak']= df_peaks[peak_idx]
@@ -780,10 +806,10 @@ class SpectralAnalysis:
         # flatten the spectrum
         try:
             spec_flat, spec_real, _, _ = self.FnFlattenSpectrum()
-        except:
+        except ValueError:
             spec_flat, spec_real, _, _ = self.FnFlattenSpectrum(correct=True)
             
-        # FIXME: find doppler peak and left and right bases, takes time is slow
+        # FIXME: find doppler peak and left and right bases, takes time is slow, peak with zero width
         df_peaks = self.FnDopplerPeaks(spec_flat, peak_mode=peak_mode)
 
         vlos, snr  = {}, {}
@@ -865,14 +891,17 @@ class SpectralAnalysis:
         # find if the large deviations lie at the tails
         is_tail = (temp_df.index <  int(Nbins/4)) | (temp_df.index >  int(Nbins*3/4)) 
         # is_tail = ((temp_df.loc[large_dev].index <= round(Nbins/4)) | (temp_df.loc[large_dev].index > round(Nbins*3/4))
-        outlier_first = temp_df[large_dev & is_tail].index[0]
-        outlier_last = temp_df[large_dev & is_tail].index[-1]
-        outlier_limits = [outlier_first, outlier_last]
-        
+        try:
+            outlier_first = temp_df[large_dev & is_tail].index[0]
+            outlier_last = temp_df[large_dev & is_tail].index[-1]
+            outlier_limits = [outlier_first, outlier_last]
+            new_df = SpectralAnalysis.mirror_spectral_tail(spec_df, limits=outlier_limits)
+        except:
+            new_df = spec_df
+
         # is there a zero shift necessary
         # lags_0, sign = SpectralAnalysis.spectral_center_position(temp_df)
         
-        new_df = SpectralAnalysis.mirror_spectral_tail(spec_df, limits=outlier_limits)
         
         return new_df
 
@@ -1071,9 +1100,9 @@ class SpectralAnalysis:
     def prepare_spec(self, spec_real, df_peaks):
         spec_idx_finite = spec_real.notna().all(axis=1)
         df_peaks_idx_finite = df_peaks.notna().all(axis=1)
-        spec_real = spec_real.loc[(spec_idx_finite & df_peaks_idx_finite),:]
-        df_peaks = df_peaks.loc[(spec_idx_finite & df_peaks_idx_finite),:]
-        spec_all = pd.concat([spec_real, df_peaks], axis=1)
+        spec_real = spec_real.loc[(spec_idx_finite.values & df_peaks_idx_finite.values),:]
+        df_peaks = df_peaks.loc[(spec_idx_finite.values & df_peaks_idx_finite.values),:]
+        spec_all = pd.concat([spec_real, df_peaks.reset_index(drop=True).set_index(spec_real.index)], axis=1)
 
         # find the peaks by interpolation and moving average over the cropped peak area
         peak_df = spec_all.apply(lambda s: self.FnFindPeaks_exact(s.filter(regex="^\d{1,3}"),s.filter(like='peak')), axis=1, result_type='expand')
@@ -1109,7 +1138,7 @@ if __name__ == "__main__":
     from ProcessSRWS import ProcessSRWS
 
     file = os.path.join(workDir, "data", "nacelle_lidar", "2021-11-10T140500+00")
-    file = r"z:/Projekte/112933-HighRe/20_Durchfuehrung/OE410/SRWS/Data/Bowtie1/2021/11/01/2021-11-01T114729+01"
+    file = r"z:\Projekte\112933-HighRe\20_Durchfuehrung\OE410\SRWS\Data\Bowtie1\2021\11\03\2021-11-03T043000+01"
     ## Get all files in folder with data
     filename, file_extension = os.path.splitext(file)
 
@@ -1119,7 +1148,8 @@ if __name__ == "__main__":
     inp.test = False
     inp.height = [1.25, 5]
     inp.relaxed_height = [1.1, 6]
-    inp.prominence = [0.25, 10]
+    inp.prominence = [0.25, 5]
+    inp.relaxed_prominence = [0.25, 10]
     inp.distance = 1
     inp.width = 1
     inp.threshold = 3500
@@ -1134,11 +1164,11 @@ if __name__ == "__main__":
     inp.interpolate = True
     inp.write_spec=True
     inp.generate_stats = False
-    inp.n_peaks = 3
+    inp.n_peaks = 1
     inp.wlen = 60
     srws = ProcessSRWS(file, inp)
 
-    data, df, spec_df = srws.Read_SRWS_bin(filename, mode='basic', write_spec=True)
+    _, df, spec_df = srws.Read_SRWS_bin(filename, mode='basic', write_spec=True)
     spectrum = spec_df['Spectrum 3']
     max_value = df['MaximumValue 3']
     
@@ -1149,7 +1179,7 @@ if __name__ == "__main__":
     max_value = SpectralAnalysis.series_zero_correction(max_value)
 
     debug = False
-    sa = SpectralAnalysis(spectrum.iloc[:2000,:], inp, max_value.iloc[:2000])
+    sa = SpectralAnalysis(spectrum, inp, max_value)
     if debug == False:
         vlos, snr, df_peaks, peak_power = sa.RunSpectralAnalysis(peak_mode='prom')
     else:
@@ -1157,8 +1187,8 @@ if __name__ == "__main__":
         # scaled_spectrum = sa.FnScaleSpectrum()
         
         # check for zeros at tail
-        # corr_spec = sa.detect_spectral_zerotail(spec_df['Spectrum 2'], duplicated_val=0, correct=True)
-        # spec_wo_noise = sa.detect_spectral_noisytail(spec_df['Spectrum 1'])
+        corr_spec = sa.detect_spectral_zerotail(spectrum.iloc[:2000], duplicated_val=0, correct=True)
+        spec_wo_noise = sa.detect_spectral_noisytail(spectrum.iloc[:2000])
 
         # # flatten the spectrum
         try:
@@ -1182,19 +1212,19 @@ if __name__ == "__main__":
 
 
     m2p.toc()
-    for k, v in vlos.items():
-        v.plot(figsize=(10,4), xlabel='N [-]', ylabel=['vlos [m/s]'],title='peaks mode=width', label=f'{k}', marker='.')
+    # for k, v in vlos.items():
+    #     v.plot(figsize=(10,4), xlabel='N [-]', ylabel=['vlos [m/s]'],title='peaks mode=width', label=f'{k}', marker='.')
 
     sys.exit('manual stop')
     
-    #%% try to capture the two peaks using the double peak Gaussian method as explained in KITcube - A mobile observation platform for convection studies deployed during HyMeX
+    #% try to capture the two peaks using the double peak Gaussian method as explained in KITcube - A mobile observation platform for convection studies deployed during HyMeX
     # from spectr import SpectralAnalysis
     popt, pcov = sa.func_lsq_fit(sa.gaussian_double_peak_distribution, spec_flat.iloc[420,:].index, spec_flat.iloc[420,:].values, p0 = [230, 1, 246, 5, 1.5, 1.8])
     print(popt)
 
 
 
-    #%% plot iwes corrected data vs measured vlos data
+    #% plot iwes corrected data vs measured vlos data
     id = range(2000)
     import plotly.graph_objects as go
     fig = go.Figure()
@@ -1235,7 +1265,7 @@ if __name__ == "__main__":
     fig.add_trace(go.Scatter(x=vlos.index[id], y=vlos[id].values, mode='markers', name="vlos"))
     fig.show()
 
-    # %% plotly plot
+    # % plotly plot
     import plotly.graph_objects as go
     fig = go.Figure()
     for i in range(5):
@@ -1250,7 +1280,7 @@ if __name__ == "__main__":
         # fig.add_trace(go.Scatter(x=spec_flat.columns, y=spec_real.iloc[i,:], mode='markers', name="flat{}".format(str(i))))
         fig.show()
 
-# %% Test Mikael spectrum 
+    # % Test Mikael spectrum 
 
     if inp.test == True:
         spectrum1= pd.Series([0, 0, 0, 1, 2, 3, 3, 4, 5, 3, 2, 1, 0, 0, 0, 0], name='Spectrum1')
@@ -1272,7 +1302,7 @@ if __name__ == "__main__":
         df_peaks, df_prop = FnFindPeaksCentroid1D(spec_interp, inp)
     
 
-# %%
+    # %
     if inp.read_dtu == True:
         df_dtu = pd.read_csv("../data/comparison/BenchmarkLOSuvw_update_2022-04-26T180000+00.csv")
 
@@ -1285,7 +1315,7 @@ if __name__ == "__main__":
         fig.show()
 
 
-# %% Extras
+# % Extras
 
     # df_prop['doppler_peak'] = df_peaks['doppler_peak']
     # df_prop['median_peak'] = [np.median([df_prop['left_ips'][i][peak_idx[i]],df_prop['right_ips'][i][peak_idx[i]]]) for i in range(len(peak_idx))]

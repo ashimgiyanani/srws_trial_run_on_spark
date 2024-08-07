@@ -1,6 +1,7 @@
 from typing import List, Any, Optional, Union, Tuple
 from matplotlib.pyplot import Axes
 import datetime
+import warnings
 
 class struct():
     def __init__(self, **kwargs):
@@ -354,7 +355,7 @@ def remove_columns(df, mode='nan+0'):
         elif padding_spec.columns[-1]==511:
             temp_df = pd.concat([temp_df, padding_spec], axis=1, ignore_index=True)
     else:
-        print('Something went wrong, test the function')
+        warnings.warn('Something went wrong, test the function')
 
     if (df.dtypes == 'uint16').all():
         temp_df.astype('uint16')
@@ -410,8 +411,9 @@ def signal_outliers(df, win_length=60, sigma=3, detrend=False):
     if detrend:
         window_val = []
         df_temp=df.rolling(window=win_length, step=int((win_length-1)/2)).apply(lambda x: window_val.append(signal.detrend(x)) or 0, raw=True)
+        df_temp = df_temp.reset_index(drop=True)
         ma_std = pd.Series(np.nan, range(len(df)))
-        ma_std.iloc[df_temp.dropna().index] = pd.Series(window_val).apply(np.std)
+        ma_std.iloc[df_temp.dropna().index] = np.std(window_val, axis=1)
         # ma_std[range(win_length)] = ma_std[-1]
     else:
         ma_std = df.rolling(window=win_length, step=int((win_length-1)/2)).std().shift(periods=-lag)
@@ -742,6 +744,8 @@ def multiple_stats_on_df(df, circular_data_cols, stats='mean', degrees=False, ci
     mean_df_nans = df.loc[:,df.isna().all(axis=0)].mean()
     # remove the nan columns
     df = df.loc[:,~df.isna().all(axis=0)]
+    # remove exptremely high values
+    df[df.abs() > 1e7] = np.nan
 
     mean_df = df.apply(func, axis=0)
     if degrees is False:
