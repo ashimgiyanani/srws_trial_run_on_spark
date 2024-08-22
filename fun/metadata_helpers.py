@@ -9,7 +9,7 @@ import time
 from datetime import *
 sys.path.append(r"../../userModules")
 from FileOperations import FileOperations
-from ProcessSRWS import ProcessSRWS
+from ProcessSRWS_spark import ProcessSRWS
 import matlab2py as m2p
 
 def generate_uuid():
@@ -256,16 +256,16 @@ def get_CampaignInfo(**kwargs):
                     }
     kwargs = default_kwargs | kwargs
 
-    time_coverage_start =  pd.to_datetime(os.path.basename(kwargs['first_measurement_file']), utc=True, infer_datetime_format=True),
-    time_coverage_end = pd.to_datetime(os.path.basename(kwargs['last_measurement_file']), utc=True, infer_datetime_format=True),
+    time_coverage_start =  pd.to_datetime(os.path.basename(kwargs['first_measurement_file']), utc=True),
+    time_coverage_end = pd.to_datetime(os.path.basename(kwargs['last_measurement_file']), utc=True),
 
 
     # searchStr = args.__dict__.get('searchStr', '(\d{4}-\d{2}-\d{2}T\d{6}\+\d{2})')
     # dateformat = args.__dict__.get('dateformat','%Y-%m-%dT%H%M%S%z')
     # last_measurement_file = args.__dict__.get('last_measurement_file', r"../data/2021-08-26T163600+02")
     # first_measurement_file = args.__dict__.get('first_measurement_file', r"../data/2021-08-26T163600+02")
-    # time_coverage_start = args.__dict__.get('time_coverage_start', pd.to_datetime(os.path.basename(first_measurement_file), utc=True, infer_datetime_format=True))
-    # time_coverage_end = args.__dict__.get('time_coverage_end', pd.to_datetime(os.path.basename(last_measurement_file), utc=True, infer_datetime_format=True))
+    # time_coverage_start = args.__dict__.get('time_coverage_start', pd.to_datetime(os.path.basename(first_measurement_file), utc=True))
+    # time_coverage_end = args.__dict__.get('time_coverage_end', pd.to_datetime(os.path.basename(last_measurement_file), utc=True))
 
     # calculated values
     time_coverage_duration = isodate.duration_isoformat((time_coverage_end[0] - time_coverage_start[0]))
@@ -326,7 +326,7 @@ def get_guiData(FilePath):
     """
     import os, sys
     sys.path.append(r"c:\Users\giyash\OneDrive - Fraunhofer\Python\Scripts\userModules")
-    from ProcessSRWS import ProcessSRWS
+    from ProcessSRWS_spark import ProcessSRWS
     inp = pa.struct()
     inp.srws = pa.struct()
     inp.srws.path = FilePath
@@ -336,16 +336,16 @@ def get_guiData(FilePath):
     filename = os.path.basename(FilePath)
     url = os.path.dirname(FilePath)
     extension = os.path.splitext(os.path.basename(FilePath))[1]
-    start_datetime = pd.to_datetime(filename, utc=True, infer_datetime_format=True)
-    data, df, _ = ProcessSRWS.Read_SRWS_bin(FilePath, mode='basic')
+    start_datetime = pd.to_datetime(filename, utc=True)
+    _, df, _ = ProcessSRWS.Read_SRWS_bin(FilePath, mode='basic')
     var_names = df.columns
-    end_datetime = pd.to_datetime(df.index[-1], utc=True, infer_datetime_format=True)
+    end_datetime = pd.to_datetime(df.index[-1], utc=True)
     file_granularity = end_datetime - start_datetime
     samples_per_file = df.index[-1]
     date_created = pd.to_datetime(datetime.fromtimestamp(os.path.getctime(FilePath)), utc=True)
     date_modified = pd.to_datetime(datetime.fromtimestamp(os.path.getmtime(FilePath)),utc= True)
-    time_coverage_start = pd.to_datetime(df.index[0], utc=True, infer_datetime_format=True)
-    time_coverage_end = pd.to_datetime(df.index[-1],  utc=True, infer_datetime_format=True)
+    time_coverage_start = pd.to_datetime(df.index[0], utc=True)
+    time_coverage_end = pd.to_datetime(df.index[-1],  utc=True)
 
     df = pd.DataFrame(
         data = [[url, filename, extension, start_datetime, end_datetime, file_granularity,\
@@ -403,16 +403,16 @@ def get_guiData_ascii(FilePath, dateformat, filename_format):
     match = re.search(datepattern, FilePath)
     url = os.path.dirname(FilePath)
     filename, extension = os.path.splitext(os.path.basename(FilePath))
-    start_datetime = pd.to_datetime(filename, utc=True, format=dateformat, infer_datetime_format=True)
+    start_datetime = pd.to_datetime(filename, utc=True, format=dateformat)
     data, df, _, df_all = Read_SRWS_bin(FilePath)
     var_names = df.columns
-    end_datetime = pd.to_datetime(df.index[-1], utc=True, infer_datetime_format=True)
+    end_datetime = pd.to_datetime(df.index[-1], utc=True)
     file_granularity = end_datetime - start_datetime
     samples_per_file = df.index[-1]
     date_created = pd.to_datetime(datetime.fromtimestamp(os.path.getctime(FilePath)), utc=True)
     date_modified = pd.to_datetime(datetime.fromtimestamp(os.path.getmtime(FilePath)),utc= True)
-    time_coverage_start = pd.to_datetime(df.index[0], utc=True, infer_datetime_format=True)
-    time_coverage_end = pd.to_datetime(df.index[-1],  utc=True, infer_datetime_format=True)
+    time_coverage_start = pd.to_datetime(df.index[0], utc=True)
+    time_coverage_end = pd.to_datetime(df.index[-1],  utc=True)
 
     df = pd.DataFrame(
         data = [[url, filename, extension, start_datetime, end_datetime, file_granularity,\

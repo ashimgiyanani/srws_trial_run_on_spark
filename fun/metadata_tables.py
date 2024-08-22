@@ -16,13 +16,11 @@ import os, sys
 import datetime
 import numpy as np
 sys.path.append(r"../fun")
-sys.path.append(r"../../userModules")
 import pythonAssist as pa
 import pandas as pd
 from datetime import datetime, timedelta
 from enumerations import *
 from metadata_helpers import *
-from Read_SRWS_bin import Read_SRWS_bin
 from ArrayType import ArrayType
 import isodate
 
