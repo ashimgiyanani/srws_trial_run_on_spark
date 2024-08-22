@@ -5,7 +5,12 @@ import warnings
 
 class struct():
     def __init__(self, **kwargs):
-        self.__dict__.update(kwargs)
+        # self.__dict__.update(kwargs)
+        for key, value in kwargs.items():
+            if isinstance(value, dict):
+                setattr(self, key, struct(**value))
+            else:
+                setattr(self, key, value)
 
     def __repr__(self):
         items = (f"{k}={v!r}" for k, v in self.__dict__.items())
@@ -33,7 +38,7 @@ def myround(x, base=5):
 def now():
     # returns the current datetime
     import datetime
-    return datetime.datetime.now().strftime('%d.%m.%Y %H:%M:%S')
+    return datetime.datetime.now().strftime('%Y.%m.%d %H:%M:%S')
 
 def today():
     from datetime import datetime

@@ -839,6 +839,7 @@ class SpectralAnalysis:
         dfs = df_series.copy()
         dfs[dfs==0] = np.nan
         dfs = dfs.ffill()
+        dfs = dfs.ffill()
         return dfs
     
     @staticmethod
@@ -1135,7 +1136,7 @@ if __name__ == "__main__":
     from spectr import SpectralAnalysis
     import pythonAssist as pa
     import matlab2py as m2p
-    from ProcessSRWS import ProcessSRWS
+    from ProcessSRWS_spark import ProcessSRWS
 
     file = os.path.join(workDir, "data", "nacelle_lidar", "2021-11-10T140500+00")
     file = r"z:\Projekte\112933-HighRe\20_Durchfuehrung\OE410\SRWS\Data\Bowtie1\2021\11\03\2021-11-03T043000+01"

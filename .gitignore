@@ -1,13 +1,15 @@
 __pycache__/
 .pytest_cache/
 .idea/
-
-# ignore extensions
+*.nc
 *.parq
 *.csv
-*.nc
-*.txt
 
-data/**
 src/memory
 fun/memory
+data/srws_data/finished_files.txt
+data/srws_data/error_files.txt
+data/srws_data/2022-04-26T185900+00
+error_files.txt
+data/2022-04-26T185800+00
+data/2022-04-26T185900+00
