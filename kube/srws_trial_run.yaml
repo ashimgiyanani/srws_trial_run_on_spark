@@ -15,10 +15,10 @@ spec:
         ## Uncomment to apply your arguments
         ## Use a new line for each argument, prefix it with a dash '-'
         args:
-          - /data/ashim-data
-          # - basic
-          # - "False"
-          # - "202*T*"
+          - /data/ashim-data/srws_data
+          - basic
+          - "False"
+          - "202*T*"
         ## Uncomment to use environment variables
         # env:
         #   - name: SOMEVAR
@@ -27,17 +27,9 @@ spec:
         - mountPath: /data/ashim-data
           name: ashim-data
           readOnly: false
-        resources:
-          requests:
-            cpu: "4"
-            memory: "16Gi"
-          limits:
-            cpu: "8"
-            memory: "64Gi"
       restartPolicy: Never
       volumes:
       - name: ashim-data
         persistentVolumeClaim:
           claimName: ashim-data
           readOnly: false
-# Invalid value: "srws_data": a lowercase RFC 1123 label must consist of lower case alphanumeric characters or '-'

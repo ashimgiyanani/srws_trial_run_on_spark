@@ -22,5 +22,4 @@ dependencies:
   - plotly
   - openpyxl
   - isodate
-  - datetime
 
