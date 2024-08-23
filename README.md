@@ -114,13 +114,3 @@ Kubernetes Jobs need to have unique names, so for each subsequent run, you *must
 If your Python script takes command-line arguments, you can add an `args:` section.
 
 If your Python script uses environment variables, specify them in the optional `env:` section.
-
-### User steps
-kubectl apply -f .\kube\srws_trial_run.yaml
-kubectl describe pod/srws-trial-run8-4lnb8
-kubectl logs -f pod/srws-trial-run8-4lnb8
-kubectl get pod
-kubectl get job
-kubectl delete job/srws-trial-run8
-.\build-container.bat
-docker push 10.93.107.160:5000/giyash/srws_trial_run:latest
